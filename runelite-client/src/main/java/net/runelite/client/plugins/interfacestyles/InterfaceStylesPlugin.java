@@ -30,6 +30,8 @@ import com.google.inject.Provides;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.EnumMap;
+import java.util.Map;
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
@@ -37,9 +39,12 @@ import net.runelite.api.Client;
 import net.runelite.api.SpriteID;
 import net.runelite.api.SpritePixels;
 import net.runelite.api.events.ConfigChanged;
-import net.runelite.api.events.WidgetPositioned;
+import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetID;
 import net.runelite.api.widgets.WidgetInfo;
+import net.runelite.api.widgets.WidgetPositionMode;
+import net.runelite.api.widgets.WidgetSizeMode;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -68,6 +73,12 @@ public class InterfaceStylesPlugin extends Plugin
 
 	@Inject
 	private SpriteManager spriteManager;
+
+	private Map<WidgetInfo, WidgetParameters> defaultWidgetParameters = new EnumMap<>(WidgetInfo.class);
+
+	private boolean haveFixedViewportDefaults = false;
+	private boolean haveResizableViewportOldSchoolBoxDefaults = false;
+	private boolean haveResizableViewportBottomLineDefaults = false;
 
 	@Provides
 	InterfaceStylesConfig provideConfig(ConfigManager configManager)
@@ -101,9 +112,38 @@ public class InterfaceStylesPlugin extends Plugin
 	}
 
 	@Subscribe
-	public void onWidgetPositioned(WidgetPositioned widgetPositioned)
+	public void onWidgetLoaded(WidgetLoaded widgetLoaded)
 	{
-		adjustWidgetDimensions();
+		if (widgetLoaded.getGroupId() == WidgetID.FIXED_VIEWPORT_GROUP_ID ||
+			widgetLoaded.getGroupId() == WidgetID.RESIZABLE_VIEWPORT_OLD_SCHOOL_BOX_GROUP_ID ||
+			widgetLoaded.getGroupId() == WidgetID.RESIZABLE_VIEWPORT_BOTTOM_LINE_GROUP_ID)
+		{
+			updateAllOverrides();
+		}
+	}
+
+	private Boolean storeWidgetDefaultDimensions(int groupId)
+	{
+		for (WidgetOffset widgetOffset : WidgetOffset.values())
+		{
+			if (widgetOffset.getWidgetInfo().getGroupId() != groupId)
+			{
+				continue;
+			}
+
+			Widget widget = client.getWidget(widgetOffset.getWidgetInfo());
+
+			if (widget != null)
+			{
+				defaultWidgetParameters.put(widgetOffset.getWidgetInfo(), new WidgetParameters(widget));
+			}
+			else
+			{
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private void updateAllOverrides()
@@ -111,6 +151,24 @@ public class InterfaceStylesPlugin extends Plugin
 		removeGameframe();
 		overrideSprites();
 		overrideWidgetSprites();
+
+		if (!haveFixedViewportDefaults)
+		{
+			haveFixedViewportDefaults = storeWidgetDefaultDimensions(WidgetID.FIXED_VIEWPORT_GROUP_ID);
+		}
+
+		if (!haveResizableViewportOldSchoolBoxDefaults)
+		{
+			haveResizableViewportOldSchoolBoxDefaults =
+				storeWidgetDefaultDimensions(WidgetID.RESIZABLE_VIEWPORT_OLD_SCHOOL_BOX_GROUP_ID);
+		}
+
+		if (!haveResizableViewportBottomLineDefaults)
+		{
+			haveResizableViewportBottomLineDefaults =
+				storeWidgetDefaultDimensions(WidgetID.RESIZABLE_VIEWPORT_BOTTOM_LINE_GROUP_ID);
+		}
+
 		restoreWidgetDimensions();
 		adjustWidgetDimensions();
 	}
@@ -224,23 +282,29 @@ public class InterfaceStylesPlugin extends Plugin
 			{
 				if (widgetOffset.getOffsetX() != null)
 				{
-					widget.setRelativeX(widgetOffset.getOffsetX());
+					widget.setOriginalX(widgetOffset.getOffsetX());
+					widget.setXPositionMode(WidgetPositionMode.ABSOLUTE_LEFT);
 				}
 
 				if (widgetOffset.getOffsetY() != null)
 				{
-					widget.setRelativeY(widgetOffset.getOffsetY());
+					widget.setOriginalY(widgetOffset.getOffsetY());
+					widget.setYPositionMode(WidgetPositionMode.ABSOLUTE_LEFT);
 				}
 
 				if (widgetOffset.getWidth() != null)
 				{
-					widget.setWidth(widgetOffset.getWidth());
+					widget.setOriginalWidth(widgetOffset.getWidth());
+					widget.setWidthMode(WidgetSizeMode.ABSOLUTE);
 				}
 
 				if (widgetOffset.getHeight() != null)
 				{
-					widget.setHeight(widgetOffset.getHeight());
+					widget.setOriginalHeight(widgetOffset.getHeight());
+					widget.setHeightMode(WidgetSizeMode.ABSOLUTE);
 				}
+
+				widget.revalidate();
 			}
 		}
 	}
@@ -253,6 +317,20 @@ public class InterfaceStylesPlugin extends Plugin
 
 			if (widget != null)
 			{
+				WidgetParameters widgetParameters = defaultWidgetParameters.get(widgetOffset.getWidgetInfo());
+
+				if (widgetParameters != null)
+				{
+					widget.setOriginalX(widgetParameters.getOriginalX());
+					widget.setOriginalY(widgetParameters.getOriginalY());
+					widget.setOriginalWidth(widgetParameters.getOriginalWidth());
+					widget.setOriginalHeight(widgetParameters.getOriginalHeight());
+					widget.setXPositionMode(widgetParameters.getXPositionMode());
+					widget.setYPositionMode(widgetParameters.getYPositionMode());
+					widget.setWidthMode(widgetParameters.getWidthMode());
+					widget.setHeightMode(widgetParameters.getHeightMode());
+				}
+
 				widget.revalidate();
 			}
 		}
